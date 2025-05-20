@@ -1,0 +1,155 @@
+---
+title: "Snip Africa Data Processing"
+author: "CHAIN Data Team"
+date: "2025-05-13"
+output: html_document
+---
+
+```{r setup_intervention, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      include = TRUE)
+
+library(flextable)
+library(here)
+library(httr)
+library(tidyverse, quietly = T) 
+library(redcapAPI) # for redcap data extraction
+library(here)      # managing work directories
+library(kableExtra)
+library(DT)
+library(janitor)
+library(table1)
+
+# setwd(here("data"))
+```
+
+### Get data
+```{r}
+
+api_token = "E02B147F965F25EAF525B6CA57DD2601"
+url = "https://apps.chainnetwork.org/studies/api/"
+db_name = "snip_africa_surveillance"
+
+file_path <- "/srv/shiny-server/snip/processed_data/"
+
+
+httr::set_config(config(ssl_verifypeer = 0L))
+
+extract_redcap_data <- function(url, token, db_name, forms = NULL, arms = NULL){
+
+  
+  redcap_con <- redcapConnection(url = url, token = token)
+  
+  data_df <- exportRecordsTyped(
+    rcon = redcap_con,
+    records = NULL,
+    forms = forms,
+    labels = FALSE,
+    dates = TRUE,
+    survey = FALSE,
+    factors = FALSE,
+    dag = T,
+    checkboxLabels = FALSE
+    
+  )
+  
+write_csv(data_df, file = here("data", paste0(db_name, ".csv"))) # SAVING RAW DATA
+    
+  return(data_df)
+  
+}
+
+snip_data <- extract_redcap_data(url, api_token, db_name)
+
+#rename "Unchecked" to NA
+snip_data[sapply(snip_data, is.factor)] <- lapply(snip_data[sapply(snip_data, is.factor)], function(x) {
+  x[x == "Unchecked"] <- NA
+  return(x)
+})
+
+```
+
+### Get data according to events
+```{r}
+#Entry
+entry_data <- snip_data %>% filter(redcap_event_name == "Entry (Arm 1: Arm 1)")
+# Replace "Unchecked" with NA in all factor columns
+entry_data <- entry_data[, colSums(!is.na(entry_data)) > 0]
+
+#Deterioration
+det_data <- snip_data %>% filter(redcap_event_name == "Deterioration and New Episode (Arm 1: Arm 1)")
+# Replace "Unchecked" with NA in all factor columns
+det_data <- det_data[, colSums(!is.na(det_data)) > 0]
+
+#Exit
+exit_data <- snip_data %>% filter(redcap_event_name == "Exit (Arm 1: Arm 1)")
+# Replace "Unchecked" with NA in all factor columns
+exit_data <- exit_data[, colSums(!is.na(exit_data)) > 0]
+
+site_df <- entry_data %>% select(record_id, site_adm)
+#Microbiology
+#micro_data <- snip_data %>% filter(redcap_event_name == "Microbiology (Arm 1: Arm 1)")
+# Replace "Unchecked" with NA in all factor columns
+#micro_data <- micro_data[, colSums(!is.na(micro_data)) > 0]
+
+#pps_data <- snip_data %>% filter(redcap_event_name == "PPS (Arm 1: Arm 1)")
+# Replace "Unchecked" with NA in all factor columns
+#pps_data <- pps_data[, colSums(!is.na(pps_data)) > 0]
+
+
+```
+
+### Entry Summary
+```{r}
+
+today <- Sys.Date()
+
+# Filter for last 7 days
+last7 <- entry_data %>% filter(date_adm >= today - 360 & date_adm <= today)
+
+# Create the summary table
+summary_table <- tibble(
+  Metric = c(
+    "Eligible cases",
+    "Deterioration during initial episode of sepsis"
+  ),
+  `Last 7 Days` = c(
+    sum(last7$ip_neonate_unit_adm == "Yes" & last7$age_elig_adm == "Yes", na.rm = TRUE),
+    sum(det_data$redcap_event_name == "Deterioration (Arm 1: Arm 1)", na.rm = TRUE)
+  ),
+  Cumulative = c(
+    sum(entry_data$ip_neonate_unit_adm == "Yes" & entry_data$age_elig_adm == "Yes", na.rm = TRUE),
+    sum(det_data$redcap_event_name == "Deterioration (Arm 1: Arm 1)", na.rm = TRUE)
+  )
+) # %>% flextable()
+
+summary_table
+
+save(summary_table, file = paste0(file_path, "summary_table.RData"))
+
+```
+
+### Exit Checks
+```{r}
+#add site
+exit_data <- exit_data %>% left_join(site_df, by="record_id")
+
+exit_summary <- exit_data %>% group_by(site_adm) %>%  summarise(
+  Discharged = length(which(outcome_sc == "Discharged")),
+  Transferred = length(which(outcome_sc == "Transferred")),
+  LAMA = length(which(outcome_sc == "Left against medical advice")),
+  Absconded = length(which(outcome_sc == "Absconded")),
+  Died = length(which(outcome_sc == "Died"))
+) # %>% flextable()
+
+save(exit_summary, file = paste0(file_path, "exit_summary.RData"))
+
+exit_summary
+
+```
+
+
+
+
