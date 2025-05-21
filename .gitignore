@@ -47,15 +47,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-<<<<<<< HEAD
-# ignore data files
-*.csv
-*.xlsx
-*.pdf
-*.txt
-*.rds
-*.rdata
-=======
 
 *.csv
 *.pdf
@@ -64,4 +55,4 @@ rsconnect/
 *.xlsx
 *.xls
 *.txt
->>>>>>> f6738bc (changes)
+
