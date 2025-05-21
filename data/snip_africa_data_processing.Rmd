@@ -74,17 +74,17 @@ snip_data[sapply(snip_data, is.factor)] <- lapply(snip_data[sapply(snip_data, is
 ### Get data according to events
 ```{r}
 #Entry
-entry_data <- snip_data %>% filter(redcap_event_name == "Entry (Arm 1: Arm 1)")
+entry_data <- snip_data %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)")
 # Replace "Unchecked" with NA in all factor columns
 entry_data <- entry_data[, colSums(!is.na(entry_data)) > 0]
 
 #Deterioration
-det_data <- snip_data %>% filter(redcap_event_name == "Deterioration and New Episode (Arm 1: Arm 1)")
+det_data <- snip_data %>% filter(redcap_event_name == "Deterioration and New Episode (Arm 1: Main Database)")
 # Replace "Unchecked" with NA in all factor columns
 det_data <- det_data[, colSums(!is.na(det_data)) > 0]
 
 #Exit
-exit_data <- snip_data %>% filter(redcap_event_name == "Exit (Arm 1: Arm 1)")
+exit_data <- snip_data %>% filter(redcap_event_name == "Exit (Arm 1: Main Database)")
 # Replace "Unchecked" with NA in all factor columns
 exit_data <- exit_data[, colSums(!is.na(exit_data)) > 0]
 
@@ -110,7 +110,7 @@ today <- Sys.Date()
 last7 <- entry_data %>% filter(date_adm >= today - 360 & date_adm <= today)
 
 # Create the summary table
-summary_table <- tibble(
+summary_table <- as.data.frame(tibble(
   Metric = c(
     "Eligible cases",
     "Deterioration during initial episode of sepsis"
@@ -123,7 +123,7 @@ summary_table <- tibble(
     sum(entry_data$ip_neonate_unit_adm == "Yes" & entry_data$age_elig_adm == "Yes", na.rm = TRUE),
     sum(det_data$redcap_event_name == "Deterioration (Arm 1: Arm 1)", na.rm = TRUE)
   )
-) # %>% flextable()
+)) # %>% flextable()
 
 summary_table
 
