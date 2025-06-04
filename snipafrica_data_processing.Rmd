@@ -1,0 +1,244 @@
+---
+title: "SNIP Africa Data processing"
+author: "Data Team"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE,
+                      include = TRUE)
+```
+### Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(lubridate)
+library(kableExtra)
+library(janitor)
+library(table1)
+library(readr)
+library(ggplot2)
+library(DT)
+library(data.table)
+library(haven)
+library(scales)
+library(readr)
+library(stringr)
+
+```
+### Path to saving to server
+```{r}
+file_path = "/srv/shiny-server/snip/processed_data/"
+```
+### Load datasets
+```{r}
+weekly_screening <- read_csv(here("raw_data/weekly_screening.csv"))
+entry <- read_csv(here("raw_data/entry.csv"))
+exit <- read_csv(here("raw_data/exit.csv"))
+bc_ast_entry <- read_csv(here("raw_data/bc_ast_entry.csv"))
+bc_rm_entry <- read_csv(here("raw_data/bc_rm_entry.csv"))
+csf_ast_entry <- read_csv(here("raw_data/csf_ast_entry.csv"))
+csf_rm_entry <- read_csv(here("raw_data/csf_rm_entry.csv"))
+```
+### Weekly screening
+```{r}
+date_vars <- c(
+  "s_date_scr" ,"e_date_scr","date_crf_complete_scr")
+               
+# Process dates 
+walk(date_vars, function(var) {
+  weekly_screening[[var]] <<- as.Date(format(
+    as.POSIXct(as.character(zap_labels(weekly_screening[[var]])), tz = "Africa/Nairobi"),
+    tz = "Africa/Nairobi" ))})
+
+# remove unwanted columns
+weekly_screening <- weekly_screening %>% 
+  select(-c(redcap_repeat_instance,redcap_event_name,redcap_repeat_instrument,redcap_data_access_group,redcap_event_name))
+
+save(weekly_screening,file = paste0(file_path, "weekly_screening.RData") )
+```
+
+```{r}
+weekly_screening_summary <- weekly_screening %>%
+  group_by(site_scr,week_scr,s_date_scr,e_date_scr) %>%
+  summarise(
+    Screened = sum(t_screen_scr,na.rm = TRUE),
+    Eligible = sum(t_eligible_scr, na.rm = TRUE),
+    Not_Eligible = sum(t_not_eligible_scr, na.rm = TRUE),
+    Enrolled = sum(t_eligible_enrol_scr, na.rm = TRUE),
+    Not_Enrolled = sum(t_eligible_not_enrol_scr, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  rename(Week = week_scr,
+         Start_date = s_date_scr,
+         End_date = e_date_scr)
+
+weekly_screening_summary <- weekly_screening_summary %>%
+  rename(
+     Site = site_scr,
+    `Screened` = Screened,
+    `Eligible` = Eligible,
+    `Not Eligible` = Not_Eligible,
+    `Enrolled` = Enrolled,
+    `Not Enrolled` = Not_Enrolled)
+
+weekly_screening_summary <- weekly_screening_summary %>%
+  mutate(Site = recode(Site,
+    "Mbagathi Hospital (KE)" = "Mbagathi",
+    "Coast General Teaching and Referral Hospital (KE)" = "Coast General",
+    "Kilifi County Hospital (KE)" = "Kilifi",
+    "Kawempe National Referral Hospital (UG)" = "Kawempe",
+    "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
+    "Komfo Anokye Teaching Hospital GN)" = "Komfo Anokye",
+    "Tygerberg Hospital (SA)" = "Tygerberg"
+  ))
+
+kbl(weekly_screening_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 14)
+
+save(weekly_screening_summary,file = paste0(file_path, "weekly_screening_summary.RData"))
+```
+### Cummulative screening summary
+```{r}
+# cummulative_screening <- weekly_screening_summary %>%
+#   summarise(
+#     Screened = sum(Screened, na.rm = TRUE),
+#     Eligible = sum(Eligible, na.rm = TRUE),
+#     Not_Eligible = sum(Not_Eligible, na.rm = TRUE),
+#     Enrolled = sum(Enrolled, na.rm = TRUE),
+#     Not_Enrolled  = sum(Not_Enrolled, na.rm = TRUE)
+#   )
+```
+
+### Screening value boxes
+```{r}
+
+Screened <-  sum(weekly_screening$t_screen_scr,na.rm = TRUE)
+Eligible <- sum(weekly_screening$t_eligible_scr, na.rm = TRUE)
+Not_Eligible <- sum(weekly_screening$t_not_eligible_scr, na.rm = TRUE)
+Enrolled <- sum(weekly_screening$t_eligible_enrol_scr, na.rm = TRUE)
+Not_Enrolled <- sum(weekly_screening$t_eligible_not_enrol_scr, na.rm = TRUE)
+
+screened_value_boxes <- data.frame(Screened= Screened, Eligible = Eligible, Not_Eligible = Not_Eligible, Enrolled = Enrolled, Not_Enrolled = Not_Enrolled)
+
+save(screened_value_boxes,file = paste0(file_path, "screened_value_boxes.RData") )
+```
+
+
+```{r}
+### Entry
+date_vars <- c(
+  "date_adm" ,"date_crf_completed_adm","date_crf_reviewed_adm")
+               
+# Process dates 
+walk(date_vars, function(var) {
+  entry[[var]] <<- as.Date(format(
+    as.POSIXct(as.character(zap_labels(entry[[var]])), tz = "Africa/Nairobi"),
+    tz = "Africa/Nairobi" ))})
+
+# remove unwanted columns
+entry <- entry %>% 
+  select(-c(redcap_event_name,redcap_data_access_group))
+
+entry <- entry %>% 
+  mutate(
+    Year_Month = format(date_adm, "%Y-%m"))
+
+save(entry,file = paste0(file_path, "entry.RData"))
+```
+### Monthly Enrolments
+```{r}
+monthly_enrolments <- entry %>%
+  mutate(
+    site_adm = recode(site_adm,
+      "Mbagathi Hospital (KE)" = "Mbagathi",
+      "Coast General Teaching and Referral Hospital (KE)" = "Coast_General",
+      "Kilifi County Hospital (KE)" = "Kilifi",
+      "Kawempe National Referral Hospital (UG)" = "Kawempe",
+      "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
+      "Komfo Anokye Teaching Hospital GN)" = "Komfo_Anokye",
+      "Tygerberg Hospital (SA)" = "Tygerberg",
+    )) %>% 
+  group_by(Year_Month, site_adm) %>%
+  summarise(Enrollments = n_distinct(record_id), .groups = 'drop') %>%
+  pivot_wider(
+    names_from = site_adm,
+    values_from = Enrollments,
+    values_fill = 0  # Fill missing combinations with 0
+  ) %>%
+  adorn_totals(where = "row", name = "Total")
+  
+
+kbl(monthly_enrolments, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 10) 
+
+save(monthly_enrolments,file = paste0(file_path, "monthly_enrolments.RData"))
+
+```
+### Exit
+```{r}
+date_vars <- c(
+  "date_last_hosp_contact_sc" ,"date_crf_completed_sc","date_crf_reviewed_sc")
+               
+# Process dates 
+walk(date_vars, function(var) {
+  exit[[var]] <<- as.Date(format(
+    as.POSIXct(as.character(zap_labels(exit[[var]])), tz = "Africa/Nairobi"),
+    tz = "Africa/Nairobi" ))})
+
+# remove unwanted columns
+exit <- exit %>% 
+  select(-c(redcap_event_name,patient_progress_chart_details_complete))
+save(exit,file = paste0(file_path, "exit.RData"))
+
+```
+### Exit outcome summary
+```{r}
+enrollment_summary <- entry %>%
+  group_by(site_adm) %>%
+  summarise(Enrolled = n(), .groups = 'drop')
+
+outcome_summary1 <- exit %>%
+  group_by(redcap_data_access_group, outcome_sc) %>%
+  summarise(Total = n(), .groups = 'drop') %>% 
+  pivot_wider(names_from = outcome_sc, values_from = Total, values_fill = 0)
+
+outcome_summary <- enrollment_summary %>%
+  left_join(outcome_summary1, by = c("site_adm" = "redcap_data_access_group"))
+
+outcome_summary <- outcome_summary %>%
+  mutate(site_adm = recode(site_adm,
+    "Mbagathi Hospital (KE)" = "Mbagathi",
+    "Coast General Teaching and Referral Hospital (KE)" = "Coast General",
+    "Kilifi County Hospital (KE)" = "Kilifi",
+    "Kawempe National Referral Hospital (UG)" = "Kawempe",
+    "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
+    "Komfo Anokye Teaching Hospital GN)" = "Komfo Anokye",
+    "Tygerberg Hospital (SA)" = "Tygerberg",
+  )) %>%
+  rename(Site = site_adm)
+
+kbl(outcome_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 10)
+
+save(outcome_summary,file = paste0(file_path, "outcome_summary.RData"))
+```
+## Outcome Value boxes 
+```{r}
+Enrolled <- as.numeric(length(which(!is.na(entry$record_id))))
+Discharged <-  as.numeric(sum(exit$outcome_sc == "Discharged",na.rm = TRUE))
+Died <- as.numeric(sum(exit$outcome_sc == "Died", na.rm = TRUE))
+Absconded <- as.numeric(sum(exit$outcome_sc == "Absconded", na.rm = TRUE))
+Left_against_medical_advice <- as.numeric(sum(exit$outcome_sc == "Left against medical advice", na.rm = TRUE))
+
+outcome_value_boxes <- data.frame(Enrolled = Enrolled, Discharged= Discharged, Died = Died, Left_against_medical_advice = Left_against_medical_advice,Absconded = Absconded)
+
+save(outcome_value_boxes,file = paste0(file_path, "outcome_value_boxes.RData") )
+  
+
+```
+
