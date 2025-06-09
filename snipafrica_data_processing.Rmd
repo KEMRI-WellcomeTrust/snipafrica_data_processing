@@ -3,7 +3,10 @@ title: "SNIP Africa Data processing"
 author: "Data Team"
 date: "`r Sys.Date()`"
 output:
+  pdf_document: default
   html_document: default
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -241,4 +244,34 @@ save(outcome_value_boxes,file = paste0(file_path, "outcome_value_boxes.RData") )
   
 
 ```
+  
+```{r}
+# Create row-wise unique organism list per row
+organism_counts <- entry %>%
+  mutate(row_id = row_number()) %>%  
+  rowwise() %>%
+  mutate(organism = list(unique(na.omit(c_across(
+    c(organism1_name_bc, organism2_name_bc, organism3_name_bc, organism4_name_bc)
+  ))))) %>%
+  ungroup() %>%
+  select(row_id, organism) %>%
+  unnest(organism) %>%
+  count(organism, name = "n_cases") %>%
+  arrange(desc(n_cases))
+ 
+##plot
+ggplot(organism_counts, aes(x = reorder(organism, n_cases), y = n_cases)) +
+  geom_col(fill = "blue") +
+  coord_flip() +
+  geom_text(aes(label = n_cases), hjust = -0.1) +
+  labs(
+    title = "Frequency of Organisms Identified (Unique per Entry)",
+    x = NULL,
+    y = "Number of Unique Cases"
+  ) +
+  theme_minimal()
+
+save(organism_counts ,file = paste0(file_path, "organism_counts.RData") )
+```
+  
 
