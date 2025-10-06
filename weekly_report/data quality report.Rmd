@@ -1,0 +1,176 @@
+---
+title: "Weekly Screening Data Quality Report"
+author: "SNIP Africa"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+params:
+  week_filter: NULL
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(forcats)
+```
+
+```{r}
+file_path = "/srv/shiny-server/snip/processed_data"
+load(here(file_path, "weekly_screening.RData"))
+```
+
+```{r}
+data_week <- weekly_screening %>%
+  filter(week == max(week, na.rm = TRUE))
+```
+## 1. Key Summary (Week r params$week_filter)
+```{r}
+summary_kpi <- data_week %>%
+  summarise(
+    Screened = sum(t_screen_scr, na.rm = TRUE),
+    Eligible = sum(t_eligible_scr, na.rm = TRUE),
+    Enrolled = sum(t_eligible_enrol_scr, na.rm = TRUE)
+  )
+
+summary_kpi
+```
+## 2. Screening Summary per Site
+```{r}
+summary_data <- data_week %>%
+  group_by(Site = site_scr) %>%
+  summarise(
+    Screened = sum(t_screen_scr, na.rm = TRUE),
+    Eligible = sum(t_eligible_scr, na.rm = TRUE),
+    Enrolled = sum(t_eligible_enrol_scr, na.rm = TRUE)
+  ) %>%
+  pivot_longer(cols = -Site, names_to = "Status", values_to = "Count") %>%
+  mutate(Status = factor(Status, levels = c("Screened","Eligible","Enrolled")))
+
+ggplot(summary_data, aes(x = Status, y = Count, fill = Site)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = Count), position = position_dodge(width = 0.9), vjust = -0.3) +
+  labs(title = "Screening Summary by Site", y = "Count", x = "") +
+  theme_minimal()
+```
+### 3. Weekly Trends
+```{r}
+trend_data <- weekly_screening %>%
+  group_by(week, Site = site_scr) %>%
+  summarise(Screened = sum(t_screen_scr, na.rm = TRUE), .groups = "drop")
+
+ggplot(trend_data, aes(x = week, y = Screened, color = Site, group = Site)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Screened Trends by Site", y = "Number Screened", x = "Week") +
+  theme_minimal()
+```
+
+### 4. Reasons for Non-Eligibility
+```{r}
+reasons_data <- data_week %>%
+  pivot_longer(
+    cols = c(
+      age_greater_29days_scr,
+      sepsis_criteria_not_met_scr,
+      other_not_eligible_scr
+    ),
+    names_to = "Reason",
+    values_to = "Count"
+  )%>%
+  group_by(Reason) %>%
+  summarise(Total = sum(Count, na.rm = TRUE)) 
+
+ggplot(reasons_data, aes(x = "", y = Total, fill = Reason)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y") +
+  labs(title = "Reasons for Non-Eligibility") +
+  theme_void()
+```
+
+```{r}
+missing_tbl <- data_week %>%
+  summarise(across(everything(), ~ mean(is.na(.))*100)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Missing_Percent") %>%
+  arrange(desc(Missing_Percent))
+```
+
+```{r}
+rooms_per_site <- data_week %>%
+  pivot_longer(cols = starts_with("neo_rm"), names_to = "room_code", values_to = "checked") %>%
+  filter(checked == "Checked") %>%
+  mutate(room_name = gsub("^neo_rm_[a-z]+_", "", room_code),
+         room_name = gsub("_scr$", "", room_name),
+         room_name = gsub("_", " ", room_name),
+         room_name = tools::toTitleCase(room_name)) %>%
+  count(site_scr, room_name) %>%
+  pivot_wider(names_from = site_scr, values_from = n, values_fill = 0)
+
+rooms_per_site
+```
+
+```{r}
+queries_mismatch <- weekly_screening %>%
+  rowwise() %>%
+  mutate(
+    sum_reasons_not_eligible = sum(
+      c_across(c(
+        age_greater_29days_scr,
+        sepsis_criteria_not_met_scr,
+        other_not_eligible_scr,
+        other1_not_elig_spec_scr,
+        other2_not_elig_spec_scr
+      )),
+      na.rm = TRUE
+    ),
+    mismatch_flag = t_not_eligible_scr != sum_reasons_not_eligible
+  ) %>%
+  ungroup() %>%
+  filter(mismatch_flag) %>%
+  select(record_id,site_scr, week, t_not_eligible_scr, sum_reasons_not_eligible,age_greater_29days_scr,sepsis_criteria_not_met_scr,other_not_eligible_scr,other1_not_elig_spec_scr,other2_not_elig_spec_scr)
+```
+
+```{r}
+queries_mismatch_not_enrolled <- weekly_screening %>%
+  rowwise() %>%
+  mutate(
+    sum_reasons_not_erolled = sum(
+      c_across(c(
+        refuse_miss_consent_scr,
+        died_scr,
+        lama_scr,
+        absconded_scr,
+        other_not_enrol_scr,
+        other1_not_enrol_spec_scr,
+        other2_not_enrol_spec_scr
+      )),
+      na.rm = TRUE
+    ),
+    mismatch_flag = t_eligible_not_enrol_scr != sum_reasons_not_erolled
+  ) %>%
+  ungroup() %>%
+  filter(mismatch_flag) %>%
+  select(record_id,site_scr, week, t_eligible_not_enrol_scr, sum_reasons_not_erolled,refuse_miss_consent_scr,died_scr,lama_scr,absconded_scr,other_not_enrol_scr,other1_not_enrol_spec_scr,other2_not_enrol_spec_scr)
+```
+
+```{r}
+rooms_none_checked_by_site <- weekly_screening %>%
+  group_by(site_scr, week) %>%
+  filter({
+    prefix <- paste0("neo_rm_", tolower(site_scr), "_")
+    room_cols <- grep(paste0("^", prefix), names(.), value = TRUE)
+
+    if (length(room_cols) == 0) {
+      FALSE  # no room variables for this site
+    } else {
+      all(across(all_of(room_cols), ~ is.na(.x) | trimws(tolower(.x)) != "checked"))
+    }
+  }) %>%
+  ungroup()
+```
+

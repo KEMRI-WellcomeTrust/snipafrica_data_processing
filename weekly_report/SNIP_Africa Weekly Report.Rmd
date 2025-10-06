@@ -1,0 +1,169 @@
+---
+title: "SNIP Africa Weekly Report"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      include = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse)
+library(here)
+library(lubridate)
+library(kableExtra)
+library(janitor)
+library(table1)
+library(readr)
+library(ggplot2)
+library(DT)
+library(haven)
+library(readr)
+library(stringr)
+```
+
+```{r}
+file_path = "/srv/shiny-server/snip/processed_data/"
+load(here(file_path, "weekly_screening.RData"))
+load(here(file_path, "exit_df.RData"))
+load(here(file_path, "entry_df.RData"))
+
+
+```
+
+```{r}
+weekly_screening_plot <- weekly_screening %>%
+  group_by(Site = redcap_data_access_group) %>%
+  summarise(
+    `Total screened` = sum(t_screen_scr, na.rm = TRUE),
+    `Total eligible` = sum(t_eligible_scr, na.rm = TRUE),
+    `Total enrolled` = sum(t_eligible_enrol_scr, na.rm = TRUE)
+  ) %>%
+  mutate(Site = factor(Site, levels = Site[order(-`Total screened`)])) %>%
+  pivot_longer(cols = `Total screened`:`Total enrolled`, names_to = "Status", values_to = "Count") %>%
+  mutate(Status = factor(Status, levels = c("Total screened", "Total eligible", "Total enrolled")))
+
+ggplot(weekly_screening_plot, aes(Site, Count, fill = Status)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = Count), position = position_dodge(0.9), vjust = -0.3, size = 3) +
+  labs(title = "Screening Summary", x = "Site", y = "Count", fill = "Status") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+```
+
+```{r}
+weekly_screening_summary <- weekly_screening %>%
+  group_by(
+    Site = redcap_data_access_group,
+    Week = week,
+    Week_Start_Date = s_date_scr,
+    Week_End_Date   = e_date_scr
+  ) %>%
+  summarise(
+    Screened = sum(t_screen_scr, na.rm = TRUE),
+    Eligible_n = sum(t_eligible_scr, na.rm = TRUE),
+    Not_Eligible_n = sum(t_not_eligible_scr, na.rm = TRUE),
+    Enrolled_n = sum(t_eligible_enrol_scr, na.rm = TRUE),
+    Not_Enrolled_n = sum(t_eligible_not_enrol_scr, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Eligible = paste0(Eligible_n, " (", round(Eligible_n / Screened * 100, 1), "%)"),
+    Not_Eligible = paste0(Not_Eligible_n, " (", round(Not_Eligible_n / Screened * 100, 1), "%)"),
+    Enrolled = paste0(Enrolled_n, " (", round(Enrolled_n / Eligible_n * 100, 1), "%)"),
+    Not_Enrolled = paste0(Not_Enrolled_n, " (", round(Not_Enrolled_n / Eligible_n * 100, 1), "%)")
+  ) %>%
+  select(Site, Week, Week_Start_Date, Week_End_Date, 
+         Screened, Eligible, Not_Eligible, Enrolled, Not_Enrolled)
+
+
+kbl(weekly_screening_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>% 
+kable_styling(latex_options = "scale_down",full_width = T,font_size = 10)
+```
+#### Reasons for Not Eligible
+```{r}
+reasons_not_elig_df <- weekly_screening %>% 
+  select(site_scr,age_greater_29days_scr, sepsis_criteria_not_met_scr,other_not_eligible_scr, other1_not_elig_spec_scr,other2_not_elig_spec_scr)
+
+reasons_not_eligible_summary <- reasons_not_elig_df %>% 
+  select(
+    Site = site_scr,
+    `Age>29 days` = age_greater_29days_scr,
+    `Did not meet sepsis criteria` = sepsis_criteria_not_met_scr,
+    `Other` = other_not_eligible_scr
+  ) %>% 
+  pivot_longer(
+    cols = -Site,
+    names_to = "Reason",
+    values_to = "Count"
+  ) %>%
+  group_by(Reason, Site) %>%
+  summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = Site,
+    values_from = Count,
+    values_fill = 0
+  )
+ 
+kbl(reasons_not_eligible_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 14)
+```
+#### Enrolment
+```{r}
+
+admitted_kpi <- as.numeric(length(which(!is.na(entry_df$date_adm))))
+enrolled_kpi <- as.numeric(length(which(!is.na(entry_df$date_enrol_adm))))
+currently_in_ward_kpi <- as.numeric(
+  entry_df %>%
+    filter(!record_id %in% exit_df$record_id) %>%  # not yet exited
+    distinct(record_id) %>%
+    nrow()
+)
+currently_in_ward_kpi = paste0(currently_in_ward_kpi, " (", round(currently_in_ward_kpi/admitted_kpi*100,1), "%)")
+discharged_alive_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Alive")))
+discharged_alive_kpi = paste0(discharged_alive_kpi, " (", round(discharged_alive_kpi/enrolled_kpi*100,1), "%)")
+deaths_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Died")))
+deaths_kpi = paste0(deaths_kpi, " (", round(deaths_kpi/enrolled_kpi*100,1), "%)")
+lama_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Left against medical advice")))
+transferred_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Transferred")))
+absconded_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Absconded")))
+
+kpi_value_boxes <- data.frame(admitted_kpi = admitted_kpi,enrolled_kpi = enrolled_kpi, currently_in_ward_kpi = currently_in_ward_kpi,discharged_alive_kpi = discharged_alive_kpi,deaths_kpi = deaths_kpi, lama_kpi = lama_kpi,transferred_kpi =transferred_kpi,absconded_kpi  )
+kpi_summary <- tibble::tibble(
+  KPI = c(
+    "Admitted",
+    "Enrolled",
+    "Currently in Ward",
+    "Discharged Alive",
+    "Deaths",
+    "Left Against Medical Advice",
+    "Transferred",
+    "Absconded"
+  ),
+  Value = c(
+    admitted_kpi,
+    enrolled_kpi,
+    currently_in_ward_kpi,
+    discharged_alive_kpi,
+    deaths_kpi,
+    lama_kpi,
+    transferred_kpi,
+    absconded_kpi
+  )
+)
+kbl(kpi_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 14)
+```
+
+```{r}
+
+```
+

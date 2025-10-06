@@ -49,6 +49,8 @@ lab_results_df <- read_csv(here("raw_data/lab_results_df.csv"))
 ```
 ### Processing weekly screening data
 ```{r}
+load(here("raw_data", "meta_screening.RDS"))
+meta_screening <- get("meta_screening")
 weekly_screening <- rename_checkboxes(weekly_screening, meta_screening)
 # Add week number to dataset
 study_start_date <- as.Date("2025-09-01")
@@ -86,7 +88,8 @@ entry_df <- entry_df %>%
     clin_sign_irritability = clinical_sign_adm___10)
 
 save(entry_df,file = paste0(file_path, "entry_df.RData"))
-write_csv(entry_df, file = here("raw_data","entry_df.csv")) 
+write_csv(entry_df, file = here("raw_data","entry_df.csv"))
+
 ```
 ### Process Patient progress chart data 
 ```{r}

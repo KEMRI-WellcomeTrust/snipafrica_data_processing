@@ -1,3 +1,5 @@
+library(REDCapR)
+
 meta <- exportMetaData(snip_main_con)  ### Export meta data(data disctionary)
 meta_expanded <- exportMetaData(snip_main_con) %>%
   rowwise() %>%

@@ -58,6 +58,8 @@ weekly_screening <- weekly_screening %>%
 write_csv(weekly_screening,file = here("raw_data", "weekly_screening.csv"))
 
 meta_screening <- exportMetaData(snip_weekly_scrn_con)
+
+save(meta_screening, file = here("raw_data", "meta_screening.RDS"))
 ```
 
 ### SNIP Africa main database connection
