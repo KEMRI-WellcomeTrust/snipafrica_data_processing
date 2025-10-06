@@ -1,7 +1,7 @@
 Data extraction
 ================
 Data Team
-2025-05-24
+2025-10-06
 
 ``` r
 library(tidyverse)
@@ -9,43 +9,77 @@ library(redcapAPI)
 library(lubridate)
 library(here)
 library(httr)
+library(haven)
 ```
+
+## Weekly screening database connection
 
 ``` r
-snip_token <-"6185C58565F31D631F12085E94042A1F"
+snip_weekly_scrn_token <-"C32B74DAE2D24163458E058858A4FCDC"
 url <- "https://apps.chainnetwork.org/studies/redcap_v14.3.3/API/"
 httr::set_config(config(ssl_verifypeer = 0L))
-snip_con <- redcapConnection(url = url, token = snip_token)
-forms <- exportInstruments(rcon = snip_con)
-arms <- exportArms(rcon = snip_con)
+snip_weekly_scrn_con <- redcapConnection(url = url, token = snip_weekly_scrn_token)
+forms <- exportInstruments(rcon = snip_weekly_scrn_con)
+arms <- exportArms(rcon = snip_weekly_scrn_con)
 ```
 
-## Weekly screening data
+## Weekly screening data extraction
 
 ``` r
 weekly_screening <- exportRecordsTyped(
-  rcon = snip_con,
+  rcon = snip_weekly_scrn_con,
   records = NULL,
   forms = "weekly_screening",
-  survey = FALSE, 
+  survey = FALSE,
   factors = FALSE,
   dag = T,
   checkboxLabels = FALSE
 )
+# Replace "Unchecked" with NA in all factor columns
+weekly_screening[sapply(weekly_screening, is.factor)] <- lapply(weekly_screening[sapply(weekly_screening, is.factor)], function(x) {
+  x[x == "Unchecked"] <- NA
+  return(x)
+})
+##Convert the dates to maintain redcap date and date class
+weekly_screening <- weekly_screening %>%
+  mutate(across(
+    .cols = matches("date", ignore.case = TRUE),
+    .fns = ~ as.Date(as.character(zap_labels(.x)))
+  ))
+## Save weekly screening data
+write_csv(weekly_screening,file = here("raw_data", "weekly_screening.csv"))
+
+meta_screening <- exportMetaData(snip_weekly_scrn_con)
 ```
 
-## All snip data
+### SNIP Africa main database connection
+
+``` r
+snip_main_token <-"6185C58565F31D631F12085E94042A1F"
+url <- "https://apps.chainnetwork.org/studies/redcap_v14.3.3/API/"
+httr::set_config(config(ssl_verifypeer = 0L))
+snip_main_con <- redcapConnection(url = url, token = snip_main_token)
+forms <- exportInstruments(rcon = snip_main_con)
+arms <- exportArms(rcon = snip_main_con)
+source("meta_data_function.R")
+```
+
+### Extract all forms
 
 ``` r
 snip_df <- exportRecordsTyped(
-  rcon = snip_con,
-  records = NULL,
+  rcon = snip_main_con,
+  events = NULL,
   forms = NULL,
-  survey = FALSE, 
+  records = NULL,
+  labels = FALSE,
+  dates = TRUE,
+  survey = FALSE,
   factors = FALSE,
   dag = T,
   checkboxLabels = FALSE
 )
+
 # Replace "Unchecked" with NA in all factor columns
 snip_df[sapply(snip_df, is.factor)] <- lapply(snip_df[sapply(snip_df, is.factor)], function(x) {
   x[x == "Unchecked"] <- NA
@@ -53,57 +87,76 @@ snip_df[sapply(snip_df, is.factor)] <- lapply(snip_df[sapply(snip_df, is.factor)
 })
 ```
 
-### Get datasets according to events
+### Filter datasets
+
+### Entry CRF data
 
 ``` r
-## weekly screening
-write_csv(weekly_screening, 
-          file = here("raw_data", "weekly_screening.csv"))
+### Filter entry dataset
+entry_vars <- meta_expanded %>%filter(form_name == "entry_crf") %>% pull(field_name) %>% unique()
+entry_vars <- intersect(entry_vars, names(snip_df))# Keep only variables that exist in snip_df
+entry_df <- snip_df %>%select(record_id, redcap_event_name, redcap_data_access_group,all_of(entry_vars)) %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)",is.na(snip_df$redcap_repeat_instrument))
 
-save(weekly_screening,
-     file = here("raw_data", "weekly_screening.rda"))
+##Convert the dates to maintain redcap date and date class
+entry_df <- entry_df %>% mutate(across( .cols = matches("date", ignore.case = TRUE) | all_of("dob_adm"),
+    .fns = ~ as.Date(as.character(zap_labels(.x)))))
 
-## Entry
-entry <- snip_df %>% dplyr::filter(redcap_event_name == "Entry (Arm 1: Main Database)") 
-entry <- entry %>% dplyr::filter(is.na(redcap_repeat_instrument))
-entry <- entry %>% select(where(~ any(!is.na(.))))
-write_csv(entry, file = here("raw_data", "entry.csv"))
-save(entry,file = here("raw_data", "entry.rda"))
+write_csv(entry_df, file = here("raw_data", "entry_df.csv")) 
+```
 
-## Exit 
-exit <- snip_df %>% filter(redcap_event_name == "Exit (Arm 1: Main Database)")
-exit <- exit %>% select(where(~ any(!is.na(.))))
-write_csv(exit, file = here("raw_data","exit.csv"))
-save(exit,file = here("raw_data", "exit.rda"))
+### Patient progress chart data
 
-##Blood culture AST - Entry
-bc_ast_entry <- snip_df %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)") 
-bc_ast_entry <- bc_ast_entry %>% dplyr::filter(redcap_repeat_instrument == "Blood Culture AST")
-bc_ast_entry <- bc_ast_entry %>% select(where(~ any(!is.na(.))))
-write_csv(bc_ast_entry, file = here("raw_data","bc_ast_entry.csv"))
+``` r
+progress_chart_vars <- meta_expanded %>% filter(form_name == "patient_progress_daily_chart") %>% pull(field_name) %>%unique()
+progress_chart_vars <- intersect(progress_chart_vars, names(snip_df))# Keep only variables that exist in your SNIP DF
+progress_chart_df <- snip_df %>% select(record_id, redcap_event_name,redcap_repeat_instance, redcap_data_access_group,all_of(progress_chart_vars)) %>%filter(redcap_event_name == "Patient Progress (Arm 1: Main Database)") 
 
-## Blood culture Resistant marker results - Entry
-bc_rm_entry <- snip_df %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)") 
-bc_rm_entry <- bc_rm_entry %>% dplyr::filter(redcap_repeat_instrument == "Blood Culture Resistant Markers Results")
-bc_rm_entry <- bc_rm_entry %>% select(where(~ any(!is.na(.))))
-write_csv(bc_rm_entry, file = here("raw_data","bc_rm_entry.csv"))
+##Convert the dates to maintain redcap date and date class
+progress_chart_df <- progress_chart_df %>%
+  mutate(
+    across(
+      .cols = matches("date", ignore.case = TRUE) & !all_of("date_last_hosp_contact_check_ppc"),
+      .fns  = ~ as.Date(as.character(zap_labels(.x)))
+    )
+  )
+## Save
+write_csv(progress_chart_df, file = here("raw_data", "progress_chart_df.csv")) 
+```
 
-## CSF culture AST - Entry
-csf_ast_entry <- snip_df %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)") 
-csf_ast_entry <- csf_ast_entry %>% dplyr::filter(redcap_repeat_instrument == "CSF culture AST")
-csf_ast_entry <- csf_ast_entry %>% select(where(~ any(!is.na(.))))
-write_csv(csf_ast_entry, file = here("raw_data","csf_ast_entry.csv"))
+### Exit Data
 
-## CSF culture Resistant marker results - Entry
-csf_rm_entry <- snip_df %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)") 
-csf_rm_entry <- csf_rm_entry %>% dplyr::filter(redcap_repeat_instrument == "CSF culture resistant markers results")
-csf_rm_entry <- csf_rm_entry %>% select(where(~ any(!is.na(.))))
-write_csv(csf_rm_entry, file = here("raw_data","csf_rm_entry.csv"))
+``` r
+exit_vars <- meta_expanded %>%filter(form_name == "exit_crf") %>% pull(field_name) %>% unique()
+exit_vars <- intersect(exit_vars, names(snip_df))# Keep only variables that exist in snip_df
+exit_df <- snip_df %>%select(record_id, redcap_event_name, redcap_data_access_group,all_of(exit_vars)) %>% filter(redcap_event_name == "Exit (Arm 1: Main Database)")
 
+##Convert the dates to maintain redcap date and date class
+exit_df <- exit_df %>%
+  mutate(across(
+    .cols = matches("date", ignore.case = TRUE),
+    .fns = ~ as.Date(as.character(zap_labels(.x)))
+  ))
 
-## Deterioration BC and CSF
+write_csv(exit_df, file = here("raw_data", "exit_df.csv")) 
+```
 
-# Patient progress chart - Details and daily chart
+### Lab results dataset: Entry
 
-## BC results  , csf culture results, patient progress details are all in enrty data
+``` r
+lab_results_vars <- meta_expanded %>%
+  filter(form_name %in% c("blood_culture_results", "csf_microscopy_and_culture_results")) %>%
+  pull(field_name) %>%
+  unique()
+
+lab_results_vars <- intersect(lab_results_vars, names(snip_df))# Keep only variables that exist in snip_df
+lab_results_df <- snip_df %>%select(record_id, redcap_event_name, redcap_data_access_group,all_of(lab_results_vars)) %>% filter(redcap_event_name == "Entry (Arm 1: Main Database)",is.na(snip_df$redcap_repeat_instrument))
+
+##Convert the dates to maintain redcap date and date class
+lab_results_df <- lab_results_df %>%
+  mutate(across(
+    .cols = matches("date", ignore.case = TRUE),
+    .fns = ~ as.Date(as.character(zap_labels(.x)))
+  ))
+
+write_csv(lab_results_df, file = here("raw_data", "lab_results_df.csv"))
 ```

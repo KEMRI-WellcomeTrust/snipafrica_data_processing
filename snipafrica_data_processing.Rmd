@@ -4,6 +4,9 @@ author: "Data Team"
 date: "`r Sys.Date()`"
 output:
   html_document: default
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -28,217 +31,731 @@ library(haven)
 library(scales)
 library(readr)
 library(stringr)
-
+source("rename_checkboxes.R")
 ```
+
 ### Path to saving to server
 ```{r}
 file_path = "/srv/shiny-server/snip/processed_data/"
 ```
+
 ### Load datasets
 ```{r}
 weekly_screening <- read_csv(here("raw_data/weekly_screening.csv"))
-entry <- read_csv(here("raw_data/entry.csv"))
-exit <- read_csv(here("raw_data/exit.csv"))
-bc_ast_entry <- read_csv(here("raw_data/bc_ast_entry.csv"))
-bc_rm_entry <- read_csv(here("raw_data/bc_rm_entry.csv"))
-csf_ast_entry <- read_csv(here("raw_data/csf_ast_entry.csv"))
-csf_rm_entry <- read_csv(here("raw_data/csf_rm_entry.csv"))
+entry_df <- read_csv(here("raw_data/entry_df.csv"))
+progress_chart_df <- read_csv(here("raw_data/progress_chart_df.csv"))
+exit_df <- read_csv(here("raw_data/exit_df.csv"))
+lab_results_df <- read_csv(here("raw_data/lab_results_df.csv"))
 ```
-### Weekly screening
+### Processing weekly screening data
 ```{r}
-date_vars <- c(
-  "s_date_scr" ,"e_date_scr","date_crf_complete_scr")
-               
-# Process dates 
-walk(date_vars, function(var) {
-  weekly_screening[[var]] <<- as.Date(format(
-    as.POSIXct(as.character(zap_labels(weekly_screening[[var]])), tz = "Africa/Nairobi"),
-    tz = "Africa/Nairobi" ))})
+weekly_screening <- rename_checkboxes(weekly_screening, meta_screening)
+# Add week number to dataset
+study_start_date <- as.Date("2025-09-01")
 
-# remove unwanted columns
+weekly_screening <- weekly_screening %>%
+  mutate(
+    week = as.integer(floor(as.numeric(s_date_scr - study_start_date) / 7)) + 1) 
+
 weekly_screening <- weekly_screening %>% 
-  select(-c(redcap_repeat_instance,redcap_event_name,redcap_repeat_instrument,redcap_data_access_group,redcap_event_name))
+  select(record_id, week,everything())
 
 save(weekly_screening,file = paste0(file_path, "weekly_screening.RData") )
+write_csv(weekly_screening, file = here("raw_data","weekly_screening.csv")) 
+```
+## Processing entry data
+```{r}
+### Generate new variables ( Year_Monthj, length of stay)
+entry_df <- entry_df %>% 
+  mutate(
+    Year_Month = format(date_enrol_adm, "%Y-%m"),
+    Week = as.integer(floor(difftime(date_enrol_adm, study_start_date, units = "days") / 7) + 1))
+
+## Rename variables  
+entry_df <- entry_df %>%
+  rename(site = redcap_data_access_group,
+    clin_sign_temp = clinical_sign_adm___1,
+    clin_sign_chest_indrawing = clinical_sign_adm___2,
+    clin_sign_abdominal_distention = clinical_sign_adm___3,
+    clin_sign_difficulty_feeding = clinical_sign_adm___4,
+    clin_sign_shock = clinical_sign_adm___5,
+    clin_sign_lethargy = clinical_sign_adm___6,
+    clin_sign_cyanosis = clinical_sign_adm___7,
+    clin_sign_heart_rate = clinical_sign_adm___8,
+    clin_sign_convulsion = clinical_sign_adm___9,
+    clin_sign_irritability = clinical_sign_adm___10)
+
+save(entry_df,file = paste0(file_path, "entry_df.RData"))
+write_csv(entry_df, file = here("raw_data","entry_df.csv")) 
+```
+### Process Patient progress chart data 
+```{r}
+## Rename redcap access group to site 
+progress_chart_df <-  progress_chart_df %>% rename(site = redcap_data_access_group)
+save(progress_chart_df,file = paste0(file_path, "progress_chart_df.RData"))
+
+```
+### Process Exit data
+```{r}
+## Rename redcap access group to site 
+exit_df <-  exit_df %>% rename(site = redcap_data_access_group)
+save(exit_df,file = paste0(file_path, "exit_df.RData"))
+write_csv(exit_df, file = here("raw_data","exit_df.csv")) 
+```
+### Process lab results
+```{r}
+lab_results_df <- lab_results_df %>% 
+  rename(site = redcap_data_access_group)
+
+save(lab_results_df,file = paste0(file_path, "lab_results_df.RData"))
+write_csv(lab_results_df, file = here("raw_data","lab_results_df.csv"))   
 ```
 
+### Weekly screening value boxes
 ```{r}
-weekly_screening_summary <- weekly_screening %>%
-  group_by(site_scr,week_scr,s_date_scr,e_date_scr) %>%
+Screened <- sum(weekly_screening$t_screen_scr, na.rm = TRUE)
+Eligible <- sum(weekly_screening$t_eligible_scr, na.rm = TRUE)
+Eligible <- paste0(Eligible, " (", round(Eligible / Screened * 100, 1), "%)")
+Not_Eligible <- sum(weekly_screening$t_not_eligible_scr, na.rm = TRUE)
+Not_Eligible <- paste0(Not_Eligible, " (", round(Not_Eligible / Screened * 100, 1), "%)")
+Enrolled <- sum(weekly_screening$t_eligible_enrol_scr, na.rm = TRUE)
+Enrolled <- paste0(Enrolled, " (", round(Enrolled / sum(weekly_screening$t_eligible_scr, na.rm = TRUE) * 100, 1), "%)")
+Not_Enrolled <- sum(weekly_screening$t_eligible_not_enrol_scr, na.rm = TRUE)
+Not_Enrolled <- paste0(Not_Enrolled, " (", round(Not_Enrolled / sum(weekly_screening$t_eligible_scr, na.rm = TRUE) * 100, 1), "%)")
+
+screening_value_boxes <- data.frame(Screened= Screened, Eligible = Eligible, Not_Eligible = Not_Eligible, Enrolled = Enrolled, Not_Enrolled = Not_Enrolled)
+
+save(screening_value_boxes,file = paste0(file_path, "screening_value_boxes.RData") )
+
+```
+### Weekly screening summary 
+```{r}
+### Weekly screening by site 
+weekly_screening_by_site <- weekly_screening %>%
+  group_by(Site = redcap_data_access_group,Week = week, Week_Start_Date = s_date_scr, Week_End_Date  = e_date_scr) %>%
   summarise(
-    Screened = sum(t_screen_scr,na.rm = TRUE),
+    Screened = sum(t_screen_scr, na.rm = TRUE),
     Eligible = sum(t_eligible_scr, na.rm = TRUE),
-    Not_Eligible = sum(t_not_eligible_scr, na.rm = TRUE),
+    Not_Eligible = sum(t_not_eligible_scr, na.rm = TRUE), 
     Enrolled = sum(t_eligible_enrol_scr, na.rm = TRUE),
-    Not_Enrolled = sum(t_eligible_not_enrol_scr, na.rm = TRUE),
+    Not_Enrolled = sum(t_eligible_not_enrol_scr,na.rm = TRUE ),
     .groups = 'drop'
   ) %>%
-  rename(Week = week_scr,
-         Start_date = s_date_scr,
-         End_date = e_date_scr)
+  arrange(desc(Week))
 
-weekly_screening_summary <- weekly_screening_summary %>%
-  rename(
-     Site = site_scr,
-    `Screened` = Screened,
-    `Eligible` = Eligible,
-    `Not Eligible` = Not_Eligible,
-    `Enrolled` = Enrolled,
-    `Not Enrolled` = Not_Enrolled)
+save(weekly_screening_by_site,file = paste0(file_path, "weekly_screening_by_site.RData"))
 
-weekly_screening_summary <- weekly_screening_summary %>%
-  mutate(Site = recode(Site,
-    "Mbagathi Hospital (KE)" = "Mbagathi",
-    "Coast General Teaching and Referral Hospital (KE)" = "Coast General",
-    "Kilifi County Hospital (KE)" = "Kilifi",
-    "Kawempe National Referral Hospital (UG)" = "Kawempe",
-    "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
-    "Komfo Anokye Teaching Hospital GN)" = "Komfo Anokye",
-    "Tygerberg Hospital (SA)" = "Tygerberg"
-  ))
-
-kbl(weekly_screening_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
-kable_styling(latex_options = "striped",full_width = T,font_size = 14)
+### Cumulative screening 
+weekly_screening_summary <- weekly_screening %>%
+  group_by(Site = redcap_data_access_group) %>%
+  summarise(
+    Screened = sum(t_screen_scr, na.rm = TRUE),
+    Eligible = sum(t_eligible_scr, na.rm = TRUE),
+    Enrolled = sum(t_eligible_enrol_scr, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    summarise(., 
+              Site = "All Sites",
+              Screened = sum(Screened),
+              Eligible = sum(Eligible),
+              Enrolled = sum(Enrolled))
+  ) %>%
+  mutate(
+    `Eligible (%)` = paste0(Eligible, " (", round(100 * Eligible / Screened, 1), "%)"),
+    `Enrolled (%)` = paste0(Enrolled, " (", round(100 * Enrolled / Eligible, 1), "%)"),
+    Screened = as.character(Screened)
+  ) %>%
+  select(Site, Screened, `Eligible (%)`, `Enrolled (%)`) %>%
+  pivot_longer(-Site, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = Site, values_from = value)
 
 save(weekly_screening_summary,file = paste0(file_path, "weekly_screening_summary.RData"))
 ```
-### Cummulative screening summary
+### Reasons for Not Eligible 
 ```{r}
-# cummulative_screening <- weekly_screening_summary %>%
-#   summarise(
-#     Screened = sum(Screened, na.rm = TRUE),
-#     Eligible = sum(Eligible, na.rm = TRUE),
-#     Not_Eligible = sum(Not_Eligible, na.rm = TRUE),
-#     Enrolled = sum(Enrolled, na.rm = TRUE),
-#     Not_Enrolled  = sum(Not_Enrolled, na.rm = TRUE)
-#   )
+reasons_not_elig_df <- weekly_screening %>% 
+  select(site_scr,age_greater_29days_scr, sepsis_criteria_not_met_scr,other_not_eligible_scr, other1_not_elig_spec_scr,other2_not_elig_spec_scr)
+
+reasons_not_eligible_summary <- reasons_not_elig_df %>% 
+  select(
+    Site = site_scr,
+    `Age>29 days` = age_greater_29days_scr,
+    `Did not meet sepsis criteria` = sepsis_criteria_not_met_scr,
+    `Other` = other_not_eligible_scr
+  ) %>% 
+  pivot_longer(
+    cols = -Site,
+    names_to = "Reason",
+    values_to = "Count"
+  ) %>%
+  group_by(Reason, Site) %>%
+  summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = Site,
+    values_from = Count,
+    values_fill = 0
+  ) %>%
+  # Add All column summing across site columns
+  mutate(All_Sites = rowSums(across(where(is.numeric)))) %>%
+  adorn_totals(where = "row")  # optional total row
+ 
+
+kbl(reasons_not_eligible_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
+kable_styling(latex_options = "striped",full_width = T,font_size = 14)
+
+
+save(reasons_not_eligible_summary,file = paste0(file_path, "reasons_not_eligible_summary.RData") )
 ```
 
-### Screening value boxes
+### Other reasons Not Eligible 
 ```{r}
+other_reasons_not_eligible <- reasons_not_elig_df %>%
+  select(site_scr, other1_not_elig_spec_scr, other2_not_elig_spec_scr) %>%
+  pivot_longer(
+    cols = starts_with("other"),
+    names_to = "other_reason_type",
+    values_to = "other_reasons_not_eligible"
+  ) %>%
+  filter(!is.na(other_reasons_not_eligible) & other_reasons_not_eligible != "") %>%
+  group_by(Site = site_scr, other_reasons_not_eligible) %>%
+  summarise(Total = n(), .groups = "drop") %>%
+  arrange(Site, desc(Total))
 
-Screened <-  sum(weekly_screening$t_screen_scr,na.rm = TRUE)
-Eligible <- sum(weekly_screening$t_eligible_scr, na.rm = TRUE)
-Not_Eligible <- sum(weekly_screening$t_not_eligible_scr, na.rm = TRUE)
-Enrolled <- sum(weekly_screening$t_eligible_enrol_scr, na.rm = TRUE)
-Not_Enrolled <- sum(weekly_screening$t_eligible_not_enrol_scr, na.rm = TRUE)
-
-screened_value_boxes <- data.frame(Screened= Screened, Eligible = Eligible, Not_Eligible = Not_Eligible, Enrolled = Enrolled, Not_Enrolled = Not_Enrolled)
-
-save(screened_value_boxes,file = paste0(file_path, "screened_value_boxes.RData") )
+save(other_reasons_not_eligible,file = paste0(file_path, "other_reasons_not_eligible.RData") )
 ```
-
-
+### Reasons for Not enrolled 
 ```{r}
-### Entry
-date_vars <- c(
-  "date_adm" ,"date_crf_completed_adm","date_crf_reviewed_adm")
-               
-# Process dates 
-walk(date_vars, function(var) {
-  entry[[var]] <<- as.Date(format(
-    as.POSIXct(as.character(zap_labels(entry[[var]])), tz = "Africa/Nairobi"),
-    tz = "Africa/Nairobi" ))})
+reasons_df <- weekly_screening %>% 
+  select(site_scr,refuse_miss_consent_scr, died_scr, lama_scr, absconded_scr,other1_not_enrol_spec_scr,other2_not_enrol_spec_scr)
+reasons_not_enrolled_summary <- reasons_df %>%
+  select(
+    Site = site_scr,
+    `Refused or Missed Consent` = refuse_miss_consent_scr,
+    Died = died_scr,
+    LAMA = lama_scr,
+    Absconded = absconded_scr
+  ) %>%
+  pivot_longer(
+    cols = -Site,
+    names_to = "Reason",
+    values_to = "Count"
+  ) %>%
+  group_by(Reason, Site) %>%
+  summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = Site,
+    values_from = Count,
+    values_fill = 0
+  ) %>%
+  # Add 'All Sites' column summing across all site columns
+  mutate(All_Sites = rowSums(across(where(is.numeric)))) %>%
+  adorn_totals(where = "row")
 
-# remove unwanted columns
-entry <- entry %>% 
-  select(-c(redcap_event_name,redcap_data_access_group))
+save(reasons_not_enrolled_summary,file = paste0(file_path, "reasons_not_enrolled_summary.RData") )
+```
+### Other reasons not enrolled 
+```{r}
+other_reasons_not_enrolled <- reasons_df %>%
+  select(site_scr,other1_not_enrol_spec_scr, other2_not_enrol_spec_scr) %>%
+  pivot_longer(
+    cols = starts_with("other"),
+    names_to = "other_reason_type",
+    values_to = "other_reasons_not_enrolled") %>%
+  filter(!is.na(other_reasons_not_enrolled) & other_reasons_not_enrolled != "") %>%
+  group_by(Site = site_scr, other_reasons_not_enrolled) %>%
+  summarise(Total = n(), .groups = "drop") %>%
+  arrange(Site, desc(Total))
 
-entry <- entry %>% 
+save(other_reasons_not_enrolled,file = paste0(file_path, "other_reasons_not_enrolled.RData") )
+```
+### Neonatal rooms selected 
+```{r}
+neo_rooms <- weekly_screening %>%
+  pivot_longer(
+    cols = starts_with("neo_rm"),
+    names_to = "room_code",
+    values_to = "checked"
+  ) %>%
+  filter(checked == "Checked") %>%
   mutate(
-    Year_Month = format(date_adm, "%Y-%m"))
+    # Remove 'neo_rm_' and the site code
+    room_label = sub("^neo_rm_[^_]+_", "", room_code),
+    # Replace underscores with spaces
+    room_label = gsub("_", " ", room_label)
+  ) %>%
+  group_by(Site = site_scr) %>%
+  summarise(
+    Neo_Rooms_Included = paste(unique(room_label), collapse = ", "),
+    .groups = "drop"
+  )
 
-save(entry,file = paste0(file_path, "entry.RData"))
+save(neo_rooms,file = paste0(file_path, "neo_rooms.RData") )
+
 ```
-### Monthly Enrolments
+### Weekly screening queries 
 ```{r}
-monthly_enrolments <- entry %>%
+### Not eligible and not eligibel reasosn mismatch
+not_eligible_queries <- weekly_screening %>%
+  rowwise() %>%
   mutate(
-    site_adm = recode(site_adm,
-      "Mbagathi Hospital (KE)" = "Mbagathi",
-      "Coast General Teaching and Referral Hospital (KE)" = "Coast_General",
-      "Kilifi County Hospital (KE)" = "Kilifi",
-      "Kawempe National Referral Hospital (UG)" = "Kawempe",
-      "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
-      "Komfo Anokye Teaching Hospital GN)" = "Komfo_Anokye",
-      "Tygerberg Hospital (SA)" = "Tygerberg",
-    )) %>% 
-  group_by(Year_Month, site_adm) %>%
+    reasons_not_eligible_sum = sum(c_across(
+      c(age_greater_29days_scr,
+        sepsis_criteria_not_met_scr,
+        other_not_eligible_scr)
+    ), na.rm = TRUE),
+    
+    query_flag = t_not_eligible_scr != reasons_not_eligible_sum,
+    
+    query_note = ifelse(
+      query_flag,
+      paste0("Mismatch: t_not_eligible_scr (", t_not_eligible_scr,
+             ") ≠ sum of reasons (", reasons_not_eligible_sum, ")"),
+      NA
+    )
+  ) %>%
+  ungroup() %>%
+  filter(query_flag) %>%
+  select(
+    record_id,week,site_scr,
+    t_not_eligible_scr,
+    reasons_not_eligible_sum,
+    query_note
+  )
+
+save(not_eligible_queries,file = paste0(file_path, "not_eligible_queries.RData") )
+```
+### Not enrolled and not enrolled reason mismatch 
+```{r}
+not_enrolled_reason_cols <- c(
+  "refuse_miss_consent_scr",
+  "died_scr",
+  "lama_scr",
+  "absconded_scr",
+  "other_not_enrol_scr"
+)
+# Check mismatches
+not_enrolled_queries <- weekly_screening %>%
+  rowwise() %>%
+  mutate(
+    reasons_sum = sum(c_across(all_of(not_enrolled_reason_cols)), na.rm = TRUE),
+    mismatch_flag = t_eligible_not_enrol_scr != reasons_sum,
+    query_note = ifelse(
+      mismatch_flag,
+      paste0(
+        "Mismatch: Not Enrolled (", t_eligible_not_enrol_scr,
+        ") ≠ Sum of reasons (", reasons_sum, ")"
+      ),
+      NA
+    )
+  ) %>%
+  ungroup() %>%
+  filter(mismatch_flag) %>%
+  select(record_id,week, site_scr, t_eligible_not_enrol_scr, reasons_sum, query_note)
+
+save(not_enrolled_queries,file = paste0(file_path, "not_enrolled_queries.RData") )
+```
+### Weekly screening plots 
+```{r}
+weekly_screening_plot <- weekly_screening %>%
+  group_by(Site = redcap_data_access_group) %>%
+  summarise(
+    `Total screened` = sum(t_screen_scr, na.rm = TRUE),
+    `Total eligible` = sum(t_eligible_scr, na.rm = TRUE),
+    `Total enrolled` = sum(t_eligible_enrol_scr, na.rm = TRUE)
+  ) %>%
+  mutate(Site = factor(Site, levels = Site[order(-`Total screened`)])) %>%
+  pivot_longer(cols = `Total screened`:`Total enrolled`, names_to = "Status", values_to = "Count") %>%
+  mutate(Status = factor(Status, levels = c("Total screened", "Total eligible", "Total enrolled")))
+
+ggplot(weekly_screening_plot, aes(x = Site, y = Count, fill = Status)) +
+  geom_col(position = "dodge") +
+  geom_text(
+    aes(label = Count),
+    position = position_dodge(0.9),
+    vjust = -0.3,
+    size = 3
+  ) +
+  labs(
+    title = "Weekly Screening Summary per Site",
+    x = "Site",
+    y = "Count",
+    fill = "Status"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+### Generate Enrolment reports 
+### Entry: KPI value boxes 
+```{r}
+admitted_kpi <- as.numeric(length(which(!is.na(entry_df$date_adm))))
+enrolled_kpi <- as.numeric(length(which(!is.na(entry_df$date_enrol_adm))))
+currently_in_ward_kpi <- as.numeric(
+  entry_df %>%
+    filter(!record_id %in% exit_df$record_id) %>%  # not yet exited
+    distinct(record_id) %>%
+    nrow()
+)
+currently_in_ward_kpi = paste0(currently_in_ward_kpi, " (", round(currently_in_ward_kpi/admitted_kpi*100,1), "%)")
+discharged_alive_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Discharged")))
+discharged_alive_kpi = paste0(discharged_alive_kpi, " (", round(discharged_alive_kpi/enrolled_kpi*100,1), "%)")
+deaths_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Died")))
+deaths_kpi = paste0(deaths_kpi, " (", round(deaths_kpi/enrolled_kpi*100,1), "%)")
+lama_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Left against medical advice")))
+transferred_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Transferred")))
+absconded_kpi <- as.numeric(length(which(exit_df$outcome_sc == "Absconded")))
+
+kpi_value_boxes <- data.frame(admitted_kpi = admitted_kpi,enrolled_kpi = enrolled_kpi, currently_in_ward_kpi = currently_in_ward_kpi,discharged_alive_kpi = discharged_alive_kpi,deaths_kpi = deaths_kpi, lama_kpi = lama_kpi,transferred_kpi =transferred_kpi,absconded_kpi  )
+
+save(kpi_value_boxes,file = paste0(file_path, "kpi_value_boxes.RData"))
+```
+
+### Enrolment by site 
+```{r}
+enrolment_curve_site <- entry_df %>%
+  filter(!is.na(date_enrol_adm)) %>%
+  mutate(date_enrol_adm = as.Date(date_enrol_adm)) %>%
+  group_by(site, date_enrol_adm) %>%
+  summarise(daily_enrol = n(), .groups = "drop") %>%
+  group_by(site) %>%
+  arrange(date_enrol_adm) %>%
+  mutate(cum_enrol = cumsum(daily_enrol))
+
+# Get the last point for each site
+last_points <- enrolment_curve_site %>%
+  group_by(site) %>%
+  filter(date_enrol_adm == max(date_enrol_adm))
+
+# Plot cumulative enrolment by site
+ggplot(enrolment_curve_site, aes(x = date_enrol_adm, y = cum_enrol, color = site)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  geom_text(
+    data = last_points,
+    aes(label = cum_enrol),
+    vjust = -0.5, size = 4, show.legend = FALSE
+  ) +
+  labs(
+    title = "Cumulative Enrolment Curve by Site",
+    x = "Date of Enrolment",
+    y = "Cumulative Number Enrolled",
+    color = "site"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+enrolled_summary <- entry_df %>%
+  group_by(site) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  arrange(desc(Count)) %>%
+  mutate(site = factor(site, levels = site))  # relevel sites by Count
+
+save(enrolled_summary,file = paste0(file_path, "enrolled_summary.RData"))
+```
+### Monthly Enrolment by site
+```{r}
+monthly_enrolments <- entry_df %>%
+  mutate(Year_Month = format(date_enrol_adm, "%Y-%m")) %>%  # ensure Year_Month exists
+  group_by(Year_Month, site) %>%
   summarise(Enrollments = n_distinct(record_id), .groups = 'drop') %>%
   pivot_wider(
-    names_from = site_adm,
+    names_from = site,
     values_from = Enrollments,
-    values_fill = 0  # Fill missing combinations with 0
+    values_fill = 0
   ) %>%
-  adorn_totals(where = "row", name = "Total")
-  
+  # Add the 'All' column summing across all sites
+  mutate(All_sites = rowSums(across(where(is.numeric))))%>% 
+  arrange(desc(Year_Month)) %>% 
+  slice_head(n = 4)
 
 kbl(monthly_enrolments, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
 kable_styling(latex_options = "striped",full_width = T,font_size = 10) 
 
 save(monthly_enrolments,file = paste0(file_path, "monthly_enrolments.RData"))
-
 ```
-### Exit
+#### Enrolments previous weeks , current week
 ```{r}
-date_vars <- c(
-  "date_last_hosp_contact_sc" ,"date_crf_completed_sc","date_crf_reviewed_sc")
-               
-# Process dates 
-walk(date_vars, function(var) {
-  exit[[var]] <<- as.Date(format(
-    as.POSIXct(as.character(zap_labels(exit[[var]])), tz = "Africa/Nairobi"),
-    tz = "Africa/Nairobi" ))})
+# get the latest week
+current_week <- max(entry_df$Week, na.rm = TRUE)
 
-# remove unwanted columns
-exit <- exit %>% 
-  select(-c(redcap_event_name,patient_progress_chart_details_complete))
-save(exit,file = paste0(file_path, "exit.RData"))
-
-```
-### Exit outcome summary
-```{r}
-enrollment_summary <- entry %>%
-  group_by(site_adm) %>%
-  summarise(Enrolled = n(), .groups = 'drop')
-
-outcome_summary1 <- exit %>%
-  group_by(redcap_data_access_group, outcome_sc) %>%
-  summarise(Total = n(), .groups = 'drop') %>% 
-  pivot_wider(names_from = outcome_sc, values_from = Total, values_fill = 0)
-
-outcome_summary <- enrollment_summary %>%
-  left_join(outcome_summary1, by = c("site_adm" = "redcap_data_access_group"))
-
-outcome_summary <- outcome_summary %>%
-  mutate(site_adm = recode(site_adm,
-    "Mbagathi Hospital (KE)" = "Mbagathi",
-    "Coast General Teaching and Referral Hospital (KE)" = "Coast General",
-    "Kilifi County Hospital (KE)" = "Kilifi",
-    "Kawempe National Referral Hospital (UG)" = "Kawempe",
-    "St.Francis Regional Referral Hospital (TZ)" = "St.Francis",
-    "Komfo Anokye Teaching Hospital GN)" = "Komfo Anokye",
-    "Tygerberg Hospital (SA)" = "Tygerberg",
+# summarise entry enrolments by period
+entry_enrol_summary <- entry_df %>%
+  mutate(period = case_when(
+    Week < current_week ~ "Previous weeks",
+    Week == current_week ~ "Current week"
   )) %>%
-  rename(Site = site_adm)
+  group_by(site, period) %>%
+  summarise(
+    enrolled_from_entry = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = period,
+    values_from = enrolled_from_entry,
+    values_fill = 0
+  ) %>%
+  mutate(
+    Previous_weeks = `Previous weeks`,
+    Current_week   = `Current week`,
+    Cumulative     = `Previous weeks` + `Current week`
+  ) %>%
+  select(site, Previous_weeks, Current_week, Cumulative) %>%
+  arrange(site)
 
-kbl(outcome_summary, valign = "t", booktabs = T,linesep = "\\addlinespace") %>%
-kable_styling(latex_options = "striped",full_width = T,font_size = 10)
+# add the "All sites" total as the last row
+entry_enrol_summary <- bind_rows(
+  entry_enrol_summary,
+  summarise(entry_enrol_summary,
+    site = "All sites",
+    Previous_weeks = sum(Previous_weeks, na.rm = TRUE),
+    Current_week   = sum(Current_week, na.rm = TRUE),
+    Cumulative     = sum(Cumulative, na.rm = TRUE)
+  )
+)
+save(entry_enrol_summary,file = paste0(file_path, "entry_enrol_summary.RData"))
+```
+
+### Demographic characteristics and clinical features 
+```{r}
+## Use table 1 show age and sex distribution
+```
+### Sex distribution by site 
+```{r}
+ggplot(entry_df, aes(x = site, fill = sex_adm)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Proportion of Sex by Site",
+    x = "Site",
+    y = "Proportion"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal()
+
+```
+## Age in days 
+```{r}
+ggplot(entry_df, aes(x = site, y = age_days_adm)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  labs(
+    title = "Boxplot of Age in Days by Site",
+    x = "Site",
+    y = "Age (days)"
+  ) +
+  theme_minimal()
+```
+## Weight adm
+```{r}
+ggplot(entry_df, aes(x = site, y = weight_adm)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  labs(
+    title = "Boxplot of Admission Weight by Site",
+    x = "Site",
+    y = "Weight (grams)"
+  ) +
+  theme_minimal()
+```
+
+Birth weight by site 
+```{r}
+ggplot(entry_df, aes(x = site, y = birth_weight_adm, fill = site)) +
+  geom_boxplot() +
+  labs(
+    title = "Birth Weight by Site",
+    x = "Site",
+    y = "Birth Weight (kg)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+## Place of delivery by site
+```{r}
+ggplot(entry_df, aes(x = site, fill = place_delivery_adm)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Proportion of place of Delivery by Site",
+    x = "Site",
+    y = "Proportion"
+  ) +
+  theme_minimal()
+```
+## Mode of delivery
+```{r}
+ggplot(entry_df, aes(x = mode_delivery_adm, fill = mode_delivery_adm)) +
+  geom_bar() +
+  labs(
+    title = "Mode of Delivery",
+    x = "Mode of Delivery",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+### By site
+```{r}
+ggplot(entry_df, aes(x = site, fill = mode_delivery_adm)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Proportion of Mode of Delivery by Site",
+    x = "Site",
+    y = "Proportion"
+  ) +
+  theme_minimal()
+```
+### Patient Progress Reports 
+
+### No. of children who recieved supoort care 
+```{r}
+ppc_support <- progress_chart_df %>%
+  group_by(site, record_id) %>%
+  summarise(
+    Oxygen = any(oxygen_day_ppc == "Yes", na.rm = TRUE),
+    NIV = any(niv_day_ppc == "Yes", na.rm = TRUE),
+    CVC = any(cvc_day_ppc == "Yes", na.rm = TRUE),
+    PVC = any(pvc_day_ppc == "Yes", na.rm = TRUE),
+    IVFluids = any(inv_day_ppc == "Yes", na.rm = TRUE),
+    HumanMilk = any(human_milk_day_ppc == "Yes", na.rm = TRUE),
+    Probiotic = any(probiotic_day_ppc == "Yes", na.rm = TRUE),
+    KangarooCare = any(kangaroo_care_day_ppc == "Yes", na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(site) %>%
+  summarise(
+    Enrolled = n_distinct(record_id),
+    across(Oxygen:KangarooCare, ~ sum(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(across(Oxygen:KangarooCare,
+                ~ paste0(.x, " (", round(.x / Enrolled * 100, 1), "%)")))
+
+save(ppc_support, file = paste0(file_path, "ppc_support.RData"))
+
+```
+### Support care Total days 
+```{r}
+# Mapping for readable names
+support_labels <- c(
+  oxygen_day_ppc = "Oxygen",
+  niv_day_ppc = "NIV",
+  cvc_day_ppc = "CVC",
+  pvc_day_ppc = "PVC",
+  inv_day_ppc = "IV Fluids",
+  human_milk_day_ppc = "Human Milk",
+  probiotic_day_ppc = "Probiotic",
+  kangaroo_care_day_ppc = "Kangaroo Care"
+)
+
+total_days_ppc <- progress_chart_df %>%
+  summarise(across(c(oxygen_day_ppc:niv_day_ppc, cvc_day_ppc:pvc_day_ppc,
+                     inv_day_ppc, human_milk_day_ppc:kangaroo_care_day_ppc),
+                   ~ sum(.x == "Yes", na.rm = TRUE), .names = "{.col}_Count")) %>%
+  pivot_longer(everything(), names_to = "supportive_care", values_to = "Count") %>%
+  mutate(
+    supportive_care = gsub("_Count", "", supportive_care),
+    supportive_care = recode(supportive_care, !!!support_labels)
+  ) %>%
+  select(supportive_care, Count) %>% 
+    arrange(desc(Count))
+
+save(total_days_ppc, file = paste0(file_path, "total_days_ppc.RData"))
+
+```
+### Outcome Reports
+### Outcome Value boxes 
+```{r}
+outcome_boxes <- entry_df %>%
+  select(record_id) %>%
+  distinct() %>%
+  left_join(exit_df %>% select(record_id, site,outcome_sc), by = "record_id")
+
+Enrolled <- as.numeric(length(which(!is.na(outcome_boxes$record_id))))
+Discharged <-  as.numeric(sum(outcome_boxes$outcome_sc == "Discharged",na.rm = TRUE))
+Died <- as.numeric(sum(outcome_boxes$outcome_sc == "Died", na.rm = TRUE))
+Absconded <- as.numeric(sum(outcome_boxes$outcome_sc == "Absconded", na.rm = TRUE))
+Left_against_medical_advice <- as.numeric(sum(outcome_boxes$outcome_sc == "Left against medical advice", na.rm = TRUE))
+Transferred <- as.numeric(sum(outcome_boxes$outcome_sc == "Transferred",na.rm = TRUE))
+Still_admitted = as.numeric(sum(is.na(outcome_boxes$outcome_sc)), na.rm = TRUE)
+
+outcome_value_boxes <- data.frame(Enrolled = Enrolled, Discharged= Discharged, Died = Died, Left_against_medical_advice = Left_against_medical_advice,Absconded = Absconded,Transferred = Transferred, Still_admitted = Still_admitted )
+
+save(outcome_value_boxes,file = paste0(file_path, "outcome_value_boxes.RData") )
+```
+
+```{r}
+overall_outcome <- exit_df %>%
+  filter(!is.na(outcome_sc)) %>%
+  group_by(outcome_sc) %>%
+  summarise(Count = n(), .groups = "drop")
+
+overall_outcome$outcome_sc <- factor(
+  overall_outcome$outcome_sc,
+  levels = c(
+    "Discharged", 
+    "Transferred", 
+    "Left against medical advice",  # remove extra space if present
+    "Absconded", 
+    "Died"
+  ))
+save(overall_outcome,file = paste0(file_path, "overall_outcome.RData"))
+
+```
+### Outcome per site 
+```{r}
+outcome_summary <- entry_df %>%
+  left_join(exit_df %>% select(record_id, outcome_sc), by = "record_id") %>%
+  group_by(site) %>%
+  summarise(
+    Enrolled = sum(!is.na(date_enrol_adm)),
+    Discharged = sum(outcome_sc == "Discharged", na.rm = TRUE),
+    Died = sum(outcome_sc == "Died", na.rm = TRUE),
+    LAMA = sum(outcome_sc == "Left against medical advice", na.rm = TRUE),
+    Transferred = sum(outcome_sc == "Transferred", na.rm = TRUE),
+    Absconded = sum(outcome_sc == "Absconded", na.rm = TRUE),
+    Not_discharged = as.numeric(sum(is.na(outcome_sc)), na.rm = TRUE)) %>%
+  ungroup() 
 
 save(outcome_summary,file = paste0(file_path, "outcome_summary.RData"))
 ```
-## Outcome Value boxes 
+### Samples reports 
 ```{r}
-Enrolled <- as.numeric(length(which(!is.na(entry$record_id))))
-Discharged <-  as.numeric(sum(exit$outcome_sc == "Discharged",na.rm = TRUE))
-Died <- as.numeric(sum(exit$outcome_sc == "Died", na.rm = TRUE))
-Absconded <- as.numeric(sum(exit$outcome_sc == "Absconded", na.rm = TRUE))
-Left_against_medical_advice <- as.numeric(sum(exit$outcome_sc == "Left against medical advice", na.rm = TRUE))
+sample_totals_site <- lab_results_df %>%
+  group_by(site) %>%
+  summarise(
+    Total_Participants = n_distinct(record_id),
+    Blood_culture = sum(bld_sample_taken_bc == "Yes" & !is.na(date_collect_bc), na.rm = TRUE),
+    CSF           = sum(csf_sample_taken_csf == "Yes" & !is.na(date_collect_csf), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  adorn_totals(where = "row", name = "All sites")
 
-outcome_value_boxes <- data.frame(Enrolled = Enrolled, Discharged= Discharged, Died = Died, Left_against_medical_advice = Left_against_medical_advice,Absconded = Absconded)
-
-save(outcome_value_boxes,file = paste0(file_path, "outcome_value_boxes.RData") )
-  
-
+save(sample_totals_site,file = paste0(file_path, "sample_totals_site.RData"))
 ```
-
+### Blood culture results
+```{r}
+bc_summary <- lab_results_df %>%
+  filter(bld_sample_taken_bc == "Yes" & !is.na(date_collect_bc)) %>%
+  group_by(site) %>%
+  summarise(
+    Total_Blood_culture = n(),
+    Positive = sum(culture_results_bc == "Positive", na.rm = TRUE),
+    Negative = sum(culture_results_bc == "Negative", na.rm = TRUE),
+    Missing_Results = sum(is.na(culture_results_bc), na.rm = TRUE),
+    .groups = "drop"
+  ) %>% 
+  adorn_totals(where = "row")
+```
+  
+  
+  
